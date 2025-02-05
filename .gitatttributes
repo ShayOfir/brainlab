@@ -1,9 +1,15 @@
-# extensions of binary files:
+# extensions of binary files annd data files:
 *.mlapp
 *.nii
 *.nii.gz
 *.hdr
 *.img
+*.pdf
+*.csv
+*.txt
+*.rar
+*.zip
+
 
 # Ensure consistent line endings
 * text=auto
