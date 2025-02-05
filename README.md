@@ -12,7 +12,7 @@ BrainLab is a set of tools, written in `MATLAB` and `R` designed for preprocessi
 - [Descriptive Images and Reports](#descriptive-images-and-reports)
 - [Voxel-based Lesion Symptom Mapping (VLSM)](#voxel-based-lesion-symptom-mapping-(vlsm))
 - [Conjunction Analysis](#conjunction-analysis)
-- [Region-based Lesion Symptom Mapping (RLSM)](#region-based-lesion-symptom-mapping-(rlsm)]
-- [Troubleshooting]
+- [Voxel-based Lesion Symptom Mapping (RLSM)](#voxel-based-lesion-symptom-mapping-(rlsm))
+- [Troubleshooting](#troubleshooting)
 
 ## 
