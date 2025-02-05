@@ -1,0 +1,14 @@
+atlas.name,image.file,LUT.file,template.file,image.file.for.scct
+AAL,AAL_2mm_flip_correct.nii.gz,AAL.csv,ds.single_subj_T1.nii.gz,AAL_2mm_flip_correct.nii.gz
+JHU,JHU-ICBM-labels-2mm.nii.gz,WM.csv,icmb152_2mm.nii.gz,JHU-WhiteMatter-labels-2mm.nii.gz
+BNA,BN_Atlas_246_2mm.nii.gz,BN_Atlas_246_LUT.csv,ds.single_subj_T1.nii.gz,BN_Atlas_246_2mm.nii.gz
+XTRACT,xtract_atlas_2mm.nii.gz,XTRACT_LUT.csv,ds.single_subj_T1.nii.gz,xtract_atlas_2mm.nii.gz
+brodmann,brodmann.2mm.fixed.nii.gz,brodmann_LUT.csv,ds.single_subj_T1.nii.gz,brodmann.2mm.fixed.nii.gz
+AAL.flip,AAL_2mm.nii.gz,AAL.csv,ds.single_subj_T1.nii.gz,AAL_2mm.nii.gz
+LHD2,custom/LHD_parcellation2.nii.gz,custom/LHD_parcellation2_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
+LHD.cpatch,custom/LHD_crit_patches_0.1.nii.gz,custom/LHD_crit_patches_0.1_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
+LHD.large.cpatch,custom/LHD_large_crit_patches.nii.gz,custom/LHD_large_crit_patches_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
+MC.Left,custom/LHD_motor_control.nii.gz,custom/LHD_motor_control_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
+MC.Right,custom/RHD_motor_control.nii.gz,custom/RHD_motor_control_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
+BNA1mm,BNA_atlas_1mm.nii.gz,BN_Atlas_246_LUT.csv,spm152.nii.gz,spm152.nii.gz
+XTRACT1mm,xtract_atlas_1mm.nii.gz,XTRACT_LUT.csv,spm152.nii.gz,spm152.nii.gz

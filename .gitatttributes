@@ -1,1 +1,10 @@
+# extensions of binary files:
 *.mlapp
+*.nii
+*.nii.gz
+*.hdr
+*.img
+
+# Ensure consistent line endings
+* text=auto
+
