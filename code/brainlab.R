@@ -287,3 +287,154 @@ deskull.brain <- function (x, ct.op = TRUE, fraq = 0.4, more.opts)
 
     return(y)
 }
+
+warp.norm.brain <- function (patient.folder, p.fname, lesion.fname, file.format = 'nii', atlas.name = 'AAL', is.ct = TRUE, temp.op = 'atlas', heal.op = TRUE, smooth.op = 1.5, deskull=TRUE, fraq = 0.5){
+    #load("PipelineData.RData")
+    #pd <- pipeline.data
+	browser()
+    norm.brain(patient.folder, p.fname, lesion.fname, file.format, atlas.name, is.ct, temp.op, heal.op, smooth.op, deskull, fraq)
+}
+
+norm.brain <- function (patient.folder,
+                         p.fname, 
+                         lesion.fname, 
+                         file.format = "nii", 
+                         atlas.name="AAL",
+                         is.ct = TRUE, 
+                         temp.op = 'atlas',
+                         heal.op = TRUE, 
+                         smooth.op = 1.5, 
+                         deskull=TRUE, 
+                         fraq=0.5, 
+                         realign = 'Rigid',
+                         reg_method = 'SyN',
+                         interim.output = TRUE){   
+    #Normalize brain image and lesion to template.
+    #Args:
+    #  patient.folder: path to patient folder
+    #  p.fname: brain image filename
+    #  lesion.fname: lesion filename
+    #  file.format: file format (nii or hdr)
+    #  atlas.name: name of atlas
+    #  is.ct: TRUE= CT, FALSE = MRI (T1)
+    #  temp.op: template operation (atlas or template)
+    #  heal.op: TRUE= heal lesion, FALSE = don't heal
+    #  smooth.op: smoothing factor
+    #  deskull: TRUE= deskull, FALSE = don't deskull
+    #  fraq: fraction of brain to keep
+    #  realign: pre-alignmemt method (Rigid, Affine of no-prealign)
+    #  reg_method: registration method (SyN or Affine)
+    #  interim.output: TRUE= save interim output, FALSE = don't save
+
+    p.name <- basename(p.fname)
+    x.fname <- paste0(patient.folder,p.fname)
+    roi.fname <- paste0(patient.folder,lesion.fname)    
+    results.path = paste0(patient.folder);
+    atlas <- load.atlas(atlas.name,temp.op)
+	temp <- atlas$template
+    report.fname <- paste0(results.path,'/',p.name,".",atlas$name,".",temp.op,".csv")
+    postfix <- paste0(p.name,".",atlas$name)
+
+    #1. Load files and convert to ANALYZE if needed
+    if (tolower(file.format)=="hdr"){ 
+		cat(sprintf("Loading ANALYZE files: brain = %s, lesion = %s...\n",x.fname,roi.fname))
+		x <- flp(fslr::fslroi (file = x.fname)) #This methods was the only to work. Equivalently, use "crop" tool from 'fsleyes' GUI
+		roi <- flp(fslr::fslroi(file = roi.fname))
+		#Save Temporary files
+		wn(x,"x") 
+		wn(roi,"lesion")
+	
+
+    }
+    else
+    {
+        cat(sprintf("Loading NIfTI files: brain = %s, lesion = %s...\n",x.fname,roi.fname))
+        x <- rn(x = x.fname)
+        roi <- rn(x = roi.fname)
+    }
+
+    #2. Deskull x
+    if (deskull){
+        cat(sprintf("Skull stripping...\n"))
+        ds.x <- deskull.brain(x, ct.op=is.ct, fraq=fraq, more.opts = "-v")  
+		if (interim.output){
+            wn(ds.x,paste0(results.path,"/ds.x.",postfix))
+        }
+    }
+    else {
+       ds.x <- x
+
+    }
+    wn(ds.x,"ds.x")
+
+    #3. Register brain image and lesion to template
+    #3.a. Realign brain image and lesion
+	cat(sprintf('Template chosen: %s\n',temp.op))
+	realign.str <- realign
+    
+    if (lower(realign)!='no-prealign'){
+        
+        cat(sprintf("Realigning brain and lesion using ANTs %s transformation...\n",realign.str))
+        realign <- norm.ct(x = ds.x, template = temp, lesion = roi, out.file = "realigned.ds.x",method = realign.str)        
+        if (interim.output){
+            wn(realign$n.x,paste0(results.path,"/realign.ds.x.",postfix))
+            wn(realign$n.lesion,paste0(results.path,"/realign.lesion.",postfix))
+        }
+        realign.ds.x <- realign$n.x
+        #change the normalized lesion from "continous" to binary (aritfact of transformation):
+        realign.lesion <- thres.lesion(realign$n.lesion,0.5)
+    }
+    else {
+       realign <- list() 
+       realign$n.x <- ds.x
+       realign$n.lesion <- roi
+       if (heal.op){            
+            cat(sprintf("Warning: No pre-alignment was chosen, but healing is ON."))
+            cat(sprintf("Make sure that brain image AC-PC line aligned to (0,0,0)!"))
+            cat(sprintf("Healing of non-aligned images may result in distorted results. Choose either pre-alignment or turn off healing."))
+       }
+    }
+	
+    #3.b. Heal the lesion
+    if (heal.op){
+        cat(sprintf("Healing of lesion = ON...\n"))
+        healed.realign.ds.x <- heal.CT(x = realign.ds.x, lesion = realign.lesion, smooth.factor = smooth.op)
+		
+		if (interim.output){
+			wn(healed.realign.ds.x,paste0(results.path,"/heal.realign.ds.x.",postfix))
+		}
+    }
+    else {
+        cat(sprintf("Healing of lesion = OFF"))
+        healed.realign.ds.x <- realign.ds.x #don't heal
+    }
+    #3.c. registration to template:
+    cat(sprintf("Normalizaing brain and lesion using ANTs (method=%s)...\n",reg_method))
+    nrm <- norm.ct(x = healed.realign.ds.x, template = temp, lesion = realign.lesion, out.file = "norm", method=reg_method)
+
+    #4. Intersect with atlas
+    #cat (sprintf("Calculation extent according to atlas: %s\n", atlas$name))
+    #ROIs <- report.ROIs(atlas = atlas, n.lesion = nrm$n.lesion, q.thres = 0.9, out.file = report.fname)
+    
+    #5. Saving output files
+    cat(sprintf("\nSaving NIFTI files...\n"))
+
+    options.df <- data.frame("atlas" = atlas$name,
+                            "temp.op" = temp.op,
+                             "heal" = heal.op,
+                             "smooth" = smooth.op, 
+                             "deskull" = deskull, 
+                             "fraq" = fraq, 
+                             "pre-alignment" = realign,
+                             "registration" = reg_method,
+                             "interim.output" = interim.output)
+
+    write.csv(options.df,paste0(results.path,"/parameters_",postfix,".csv"))	
+    wn(temp,paste0(results.path,"/template.",postfix))
+    wn(nrm$n.x,paste0(results.path,"/norm.x.",postfix))
+    wn(nrm$n.lesion,paste0(results.path,"/norm.lesion.",postfix))   
+    cat(sprintf("Done.\n"))
+    
+    
+
+}
