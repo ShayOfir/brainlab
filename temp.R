@@ -1,2 +1,2 @@
 source("/shared/code/brainlab.R")
-analyze2nifti("/shared/data/demo/036.hdr")
+warp.deskull.brain("/shared/data/demo","transform.0102.x.nii.gz",1,0.4)
