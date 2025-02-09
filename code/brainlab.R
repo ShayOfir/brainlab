@@ -275,7 +275,7 @@ deskull.brain <- function (x, ct.op = TRUE, fraq = 0.4, more.opts)
     }
     else
     {
-      fw (x,"tmp")
+      wn(x,"tmp")
       if (missing(fraq))
       {
         fraq = 0.5
@@ -372,10 +372,10 @@ norm.brain <- function (patient.folder,
 	cat(sprintf('Template chosen: %s\n',temp.op))
 	realign.str <- realign
     
-    if (lower(realign)!='no-prealign'){
+    if (tolower(realign)!='none'){
         
         cat(sprintf("Realigning brain and lesion using ANTs %s transformation...\n",realign.str))
-        realign <- norm.ct(x = ds.x, template = temp, lesion = roi, out.file = "realigned.ds.x",method = realign.str)        
+        realign <- norm.brain.and.lesion(x = ds.x, template = temp, lesion = roi, out.file = "realigned.ds.x",method = realign.str)        
         if (interim.output){
             wn(realign$n.x,paste0(results.path,"/realign.ds.x.",postfix))
             wn(realign$n.lesion,paste0(results.path,"/realign.lesion.",postfix))
@@ -385,39 +385,38 @@ norm.brain <- function (patient.folder,
         realign.lesion <- thres.lesion(realign$n.lesion,0.5)
     }
     else {
-       realign <- list() 
-       realign$n.x <- ds.x
-       realign$n.lesion <- roi
+       realign.ds.x <- ds.x
+       realign.lesion <- roi
        if (heal.op){            
-            cat(sprintf("Warning: No pre-alignment was chosen, but healing is ON."))
-            cat(sprintf("Make sure that brain image AC-PC line aligned to (0,0,0)!"))
-            cat(sprintf("Healing of non-aligned images may result in distorted results. Choose either pre-alignment or turn off healing."))
+            cat(sprintf("Warning: No pre-alignment was chosen, but healing is ON.\n"))
+            cat(sprintf("Make sure that brain image AC-PC line aligned to (0,0,0)!\n"))
+            cat(sprintf("Healing of non-aligned images may result in distorted results. Choose either pre-alignment or turn off healing.\n"))
        }
     }
 	
     #3.b. Heal the lesion
     if (heal.op){
         cat(sprintf("Healing of lesion = ON...\n"))
-        healed.realign.ds.x <- heal.CT(x = realign.ds.x, lesion = realign.lesion, smooth.factor = smooth.op)
+        healed.realign.ds.x <- heal.brain(x = realign.ds.x, lesion = realign.lesion, smooth.factor = smooth.op)
 		
 		if (interim.output){
 			wn(healed.realign.ds.x,paste0(results.path,"/heal.realign.ds.x.",postfix))
 		}
     }
     else {
-        cat(sprintf("Healing of lesion = OFF"))
+        cat(sprintf("Healing of lesion = OFF\n"))
         healed.realign.ds.x <- realign.ds.x #don't heal
     }
     #3.c. registration to template:
     cat(sprintf("Normalizaing brain and lesion using ANTs (method=%s)...\n",reg_method))
-    nrm <- norm.ct(x = healed.realign.ds.x, template = temp, lesion = realign.lesion, out.file = "norm", method=reg_method)
+    nrm <- norm.brain.and.lesion(x = healed.realign.ds.x, template = temp, lesion = realign.lesion, out.file = "norm", method=reg_method)
 
     #4. Intersect with atlas
     #cat (sprintf("Calculation extent according to atlas: %s\n", atlas$name))
     #ROIs <- report.ROIs(atlas = atlas, n.lesion = nrm$n.lesion, q.thres = 0.9, out.file = report.fname)
     
     #5. Saving output files
-    cat(sprintf("\nSaving NIFTI files...\n"))
+    cat(sprintf("\nSaving results image files...\n"))
 
     options.df <- data.frame("atlas" = atlas$name,
                             "temp.op" = temp.op,
@@ -437,4 +436,188 @@ norm.brain <- function (patient.folder,
     
     
 
+}
+
+load.atlas <- function(atlas.name, temp.op="atlas"){
+    #load.atlas: Loads atlas
+    #Args:
+    #  atlas.name: name of atlas
+    #  temp.op: template operation (atlas or template)
+    #
+    #Returns:
+    #  atlas: atlas object
+    #
+
+    require(oro.nifti)
+    atlas <- list()
+    fnames <- NULL
+    path = atlas.and.templates.folder    
+	fnames <- retrieve.atlas.files(atlas.name)
+    
+    if (!is.null(fnames)){
+        atlas$name <- atlas.name
+        
+       
+        atlas$LUT = read.csv(paste0(path,fnames$LUT.file),header = TRUE) 
+		if (temp.op == "atlas")
+        {
+			atlas$template = rn(paste0(path,fnames$template.file))
+			atlas$img <- readNIfTI (paste0(path,fnames$image.file),reorient = F)
+		}
+		else
+		{
+			atlas$template <- rn(paste0(path,"/scct_stripped.nii")) 
+			atlas$img <- readNIfTI (paste0(path,fnames$image.file.for.scct),reorient = F)
+		}
+    }
+
+    return (atlas)
+
+    
+}
+
+
+retrieve.atlas.files <- function (atlas.name){
+    #retrieve.atlas.files: Retrieves atlas files
+    #Args:
+    #  atlas.name: name of atlas
+    #
+    #  Returns:
+    #  fnames: list of filenames
+	require(oro.nifti)
+	require(plyr)
+	
+	path <- atlas.and.templates.folder
+	atlas.df <- read.csv (file = paste0(path,'atlas_list.csv'),header = T)
+	query <- atlas.df[atlas.df$atlas.name == atlas.name,]
+	if (plyr::empty(query)){
+		cat(sprintf ("Atlas named %s was not found in atlas lists. Please update ./Templates_Atlases/atlas_list.csv.\n",atlas.name))
+		return(list())	
+	}
+	else
+	{
+		return (query)
+	}
+}
+
+atlas_list <- function()
+{
+    #atlas_list: Lists atlases
+    #Args:
+    #   void
+    #
+    #Returns:
+    #   list of atlases
+	cat(sprintf('\n'))
+	path <- atlas.and.templates.folder
+	atlas.df <- read.csv (file = paste0(path,'atlas_list.csv'),header = T)
+	for (nm in atlas.df$atlas.name){
+		cat(sprintf('%s \n',nm))
+	}
+	return(as.character(atlas.df$atlas.name))
+}
+
+norm.brain.and.lesion <- function(x, template, lesion, out.file, method)
+{
+    #norm.brain.and.lesion: Normalizes brain image and lesion to template
+    #Args:
+    #  x: brain image
+    #  template: template image
+    #  lesion: lesion image
+    #  out.file: output file name (prefix, normalized brain image and lesion files)
+    #  method: method of transformation (see extrantsr::ants_regwrite documentation for the options)
+    #
+    # Returns:
+    # out: list of normalized brain image and lesion
+    #
+
+    require(oro.nifti)
+    require(extrantsr)
+
+    wn(x,"tmp.x")
+    wn(template,"tmp.template")
+    out <- list()
+    
+    if (!missing(lesion))
+    {
+        wn(lesion,"tmp.lesion")
+        n.lesion.fname = paste0(out.file,"_lesion.nii.gz")
+        ants_regwrite(filename="tmp.x.nii.gz", outfile=paste0(out.file,".nii.gz"), retimg = F,template.file="tmp.template.nii.gz", other.files="tmp.lesion.nii.gz", other.outfiles=n.lesion.fname, typeofTransform = method) 
+        n.lesion <- rn(n.lesion.fname)
+        out$n.lesion <- n.lesion
+        out$n.x <- rn(out.file)
+        return(out)
+    }
+    else {
+       ants_regwrite(filename="tmp.x.nii.gz", outfile=paste0(out.file,".nii.gz"), retimg = F,template.file="tmp.template.nii.gz",  typeofTransform = method) 
+       out$n.x <- rn(out.file)
+       out$n.lesion <- NULL
+    }
+        
+}
+
+
+thres.lesion <- function (lesion, t = 0){
+    #thres.lesion: Thresholds lesion
+    #Args:
+    #  lesion: lesion image
+    #  t: threshold (float, 0 - 1)
+    #
+    #Returns:
+    #  new.les: thresholded lesion image
+    #
+    require(oro.nifti)
+    new.les <- lesion
+    if (missing(t)){
+        t = 0
+    }
+    new.les[new.les <= t] = 0
+    new.les[new.les > t] = 1
+    return(new.les)
+    
+}
+
+
+
+heal.brain <- function (x, lesion, out.file, smooth.factor = 1.5)
+{
+    #heal.brain: Heals brain image
+    #Args:
+    #  x: brain image
+    #  lesion: lesion image
+    #  out.file: output file name
+    #  smooth.factor: smoothing factor (float, default = 1.5)
+    #
+    #Returns:
+    #  healed: healed brain image
+    #
+
+    require(oro.nifti)
+    require(neurobase)
+    require(extrantsr)
+    thres = 0.001
+    cat(sprintf("Healing lesion with symetrical brain-matter\n"))
+    mask = lesion < thres
+    mask.flip = flip_img(mask,x=T)
+    x.masked = x * mask
+    cat(sprintf("Smoothing...\n"))
+    if (missing(smooth.factor))
+        {
+            smooth.factor = 3; #Default
+        }
+    if (smooth.factor > 0){
+            x.sm = smooth_image(x, sigma = 3, verbose = TRUE)
+    }
+    else {
+       x.sm = x #Don't smooth
+    }
+    
+    patch.origin = (!mask.flip) * x.sm
+    patch = flip_img(patch.origin, x= T)
+    healed = x.masked + patch
+        if (!missing(out.file)){
+        writeNIfTI(healed,out.file,gzipped=T)
+    }
+    return(healed) 
+    
 }
