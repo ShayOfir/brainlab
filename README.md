@@ -1,4 +1,4 @@
-# BrainLab 
+# BrainLab [Beta]
 Brain Lesion Analysis Pipeline
 
 BrainLab is a set of tools, written in `MATLAB` and `R` designed for preprocessing and analysis of lesion on brain imaging (CT and MRI). 
