@@ -711,7 +711,7 @@ overlay <- function(behavior, folder, fn.out, patient.col = 'participant', track
 	
 }
 
-flip.lesions <- function(cohort.fn, source.folder, lesion.side.col = 'side', dest.folder, flip.to = 'L')
+flip.lesions <- function(cohort.fn, source.folder, lesion.side.col = 'Side', dest.folder, flip.to = 'L')
 {
 	#Flip lesions to one side to enable flip-analysis
 	#This practice may be controversial, but sometimes we don't have a choice
