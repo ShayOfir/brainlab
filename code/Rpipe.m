@@ -38,7 +38,9 @@ if ((length(vargin)==2) && (strcmpi(vargin{1},'kw')) && (iscell(vargin{2})) && (
         else
             if k < length(args)
                 acom = [acom, args{k},', '];
-            end               
+            else
+                acom = [acom, args{k}];
+            end
         end
         kw = ~kw;
 
