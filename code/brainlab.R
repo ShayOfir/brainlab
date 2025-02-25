@@ -621,3 +621,129 @@ heal.brain <- function (x, lesion, out.file, smooth.factor = 1.5)
     return(healed) 
     
 }
+
+wrap_overlay <- function (behavior_df, folder, fn_out, subject_column = 'pcode', interim = FALSE, side_column = 'Side', which_side = c('L','R'), threshold = 0.5){
+    #wrap_overlay: Overlays brain images
+    #Args:
+    #  df: data frame
+    #  folder: folder
+    #  fn_out: output filename
+    #  subject_column: subject column
+    #  track_lesion: track lesion
+    #  side_column: side column
+    #  filter_side: filter side
+    #
+    #Returns:
+    #  sum.x: sum of brain images
+    #
+    df = read.csv(behavior_df, header = TRUE)
+    xx <- list()
+    
+    # Filter subjects by side:
+    if (is.null(which_side)){
+        which_side <- c('L','R')
+    }
+    if (!(is.null(side_column))){
+        cohort <- df[df[[side_column]] %in% which_side,]
+    }
+    
+    cat(sprintf('Lesions folder: %s.\n',folder))
+    # Load images:
+    images <- paste0(cohort[[subject_column]],'.nii.gz')
+
+    for (img in images){
+        cat(sprintf('Overlaying %s...\n',img))
+        xx[[img]] <- rn(paste0(folder,"/",img))
+        xx[[img]] <- thres.lesion(xx[[img]], threshold)
+    }
+
+    # Sum images:
+    sum.x <- xx[[1]]
+    for (k in 2:length(xx)){
+		sum.x <- sum.x + xx[[k]]
+		if (interim){
+			wn(x = sum.x, nam = paste0(fn_out,df[[subject_column]][k])) #This command is used for tracking the overlay, so one can identify images with wrong side labels
+		}
+    }
+
+    wn(x = sum.x, nam = fn_out)
+	wn(x = sum.x / length(xx), nam = paste0(fn_out,'_avg'))
+
+	return(sum.x)
+    
+    
+}
+
+
+overlay <- function(behavior, folder, fn.out, patient.col = 'participant', track.lesion = FALSE, side.col = 'Side', filter.side = NULL){
+	
+	df <- read.csv(behavior, header = T)
+	xx <- list()
+	if (!filter.side %in% c('L','R'))
+	{
+		fnames <- paste0(df[[patient.col]],'.nii.gz')
+	}
+	else
+	{
+		fnames <- paste0(df[[patient.col]][df[[side.col]]==filter.side])
+	}
+	i = 1
+	cat(sprintf('\n'))
+	for (fn in fnames){
+		cat(sprintf('overlaying %s [%d/%d]...\n',fn,i,length(fnames)))
+		xx[[i]] <- rn(paste0(folder,"/",fn))
+		xx[[i]] <- thres.lesion(xx[[i]],0)
+		i = i + 1
+	}
+	sum.x <- xx[[1]]
+	
+	for (k in 2:length(xx)){
+		sum.x <- sum.x + xx[[k]]
+		if (track.lesion)
+		{
+			wn(x = sum.x, nam = paste0(fn.out,df[[patient.col]][k])) #This command is used for tracking the overlay, so one can identify images with wrong side labels
+		}
+	}
+	#browser()
+	wn(x = sum.x, nam = fn.out)
+	wn(x = sum.x / length(xx), nam = paste0(fn.out,'_avg'))
+	return(sum.x)
+	
+}
+
+flip.lesions <- function(cohort.fn, source.folder, lesion.side.col = 'side', dest.folder, flip.to = 'L')
+{
+	#Flip lesions to one side to enable flip-analysis
+	#This practice may be controversial, but sometimes we don't have a choice
+	
+	#1. Load data-frame of patients names and their sides
+
+	cohort <- read.csv(cohort.fn , header = T)
+	for (p in 1:nrow(cohort))
+	{
+			fn <- paste0(source.folder,'/' ,cohort$pcode[p], '.nii.gz') #We assume that files are .nii.gz files
+			if (file.exists(fn))
+			{
+				out.fn <- paste0(dest.folder, '/', cohort$pcode[p])
+				if (!file.exists(dest.folder)) dir.create(dest.folder)
+				if (cohort[[lesion.side.col]][p] != flip.to) #flip is required
+					{
+						cat(sprintf('Patient %s: flipped (side = %s)\n',cohort$pcode[p],cohort[[lesion.side.col]][p]))
+						lesion <- rn(fn) #Load lesion file
+						flip.lesion <- flp(lesion)					
+						wn(flip.lesion, out.fn)
+					}
+					else
+					{
+						cat(sprintf('Patient %s: no need to flip (side = %s), copying only...\n',cohort$pcode[p],cohort[[lesion.side.col]][p]))
+						system(paste('cp -v ',fn,dest.folder))
+						
+					}
+			}
+			else
+			{
+				cat(sprintf('Lesion file for patient %s was not found!\n',cohort$pcode[p]))
+			}
+	}
+		
+}
