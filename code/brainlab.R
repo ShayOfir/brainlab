@@ -622,8 +622,8 @@ heal.brain <- function (x, lesion, out.file, smooth.factor = 1.5)
     
 }
 
-wrap_overlay <- function (behavior_df, folder, fn_out, subject_column = 'pcode', interim = FALSE, side_column = 'Side', which_side = c('L','R'), threshold = 0.5){
-    #wrap_overlay: Overlays brain images
+overlay_lesions <- function (behavior_df, folder, fn_out, subject_column = 'pcode', interim = FALSE, side_column = 'Side', which_side = c('L','R'), threshold = 0.5){
+    #overlay_lesions: Overlays brain images
     #Args:
     #  df: data frame
     #  folder: folder
@@ -675,75 +675,141 @@ wrap_overlay <- function (behavior_df, folder, fn_out, subject_column = 'pcode',
 }
 
 
-overlay <- function(behavior, folder, fn.out, patient.col = 'participant', track.lesion = FALSE, side.col = 'Side', filter.side = NULL){
-	
-	df <- read.csv(behavior, header = T)
-	xx <- list()
-	if (!filter.side %in% c('L','R'))
-	{
-		fnames <- paste0(df[[patient.col]],'.nii.gz')
-	}
-	else
-	{
-		fnames <- paste0(df[[patient.col]][df[[side.col]]==filter.side])
-	}
-	i = 1
-	cat(sprintf('\n'))
-	for (fn in fnames){
-		cat(sprintf('overlaying %s [%d/%d]...\n',fn,i,length(fnames)))
-		xx[[i]] <- rn(paste0(folder,"/",fn))
-		xx[[i]] <- thres.lesion(xx[[i]],0)
-		i = i + 1
-	}
-	sum.x <- xx[[1]]
-	
-	for (k in 2:length(xx)){
-		sum.x <- sum.x + xx[[k]]
-		if (track.lesion)
-		{
-			wn(x = sum.x, nam = paste0(fn.out,df[[patient.col]][k])) #This command is used for tracking the overlay, so one can identify images with wrong side labels
-		}
-	}
-	#browser()
-	wn(x = sum.x, nam = fn.out)
-	wn(x = sum.x / length(xx), nam = paste0(fn.out,'_avg'))
-	return(sum.x)
-	
-}
 
-flip.lesions <- function(cohort.fn, source.folder, lesion.side.col = 'Side', dest.folder, flip.to = 'L')
+flip_lesions <- function(behavior_fn, folder, subject_column = 'pcode', side_column = 'Side', dest_folder, flip_to = 'L')
 {
 	#Flip lesions to one side to enable flip-analysis
 	#This practice may be controversial, but sometimes we don't have a choice
 	
 	#1. Load data-frame of patients names and their sides
 
-	cohort <- read.csv(cohort.fn , header = T)
+	cohort <- read.csv(behavior_fn , header = T)
 	for (p in 1:nrow(cohort))
 	{
-			fn <- paste0(source.folder,'/' ,cohort$pcode[p], '.nii.gz') #We assume that files are .nii.gz files
+			fn <- paste0(folder,'/' ,cohort[[subject_column]][p], '.nii.gz') #We assume that files are .nii.gz files
 			if (file.exists(fn))
 			{
-				out.fn <- paste0(dest.folder, '/', cohort$pcode[p])
-				if (!file.exists(dest.folder)) dir.create(dest.folder)
-				if (cohort[[lesion.side.col]][p] != flip.to) #flip is required
+				out.fn <- paste0(dest_folder, '/', cohort[[subject_column]][p])
+				if (!file.exists(dest_folder)) dir.create(dest_folder)
+				if (cohort[[side_column]][p] != flip_to) #flip is required
 					{
-						cat(sprintf('Patient %s: flipped (side = %s)\n',cohort$pcode[p],cohort[[lesion.side.col]][p]))
+						cat(sprintf('Patient %s: flipped (side = %s)\n',cohort[[subject_column]][p],cohort[[side_column]][p]))
 						lesion <- rn(fn) #Load lesion file
 						flip.lesion <- flp(lesion)					
 						wn(flip.lesion, out.fn)
 					}
 					else
 					{
-						cat(sprintf('Patient %s: no need to flip (side = %s), copying only...\n',cohort$pcode[p],cohort[[lesion.side.col]][p]))
-						system(paste('cp -v ',fn,dest.folder))
+						cat(sprintf('Patient %s: no need to flip (side = %s), copying only...\n',cohort[[subject_column]][p],cohort[[side_column]][p]))
+						system(paste('cp -v ',fn,dest_folder))
 						
 					}
 			}
 			else
 			{
-				cat(sprintf('Lesion file for patient %s was not found!\n',cohort$pcode[p]))
+				cat(sprintf('Lesion file for patient %s was not found!\n',cohort[[subject_column]][p]))
 			}
 	}
 		
 }
+
+get_subj_threshold <- function(minSubjectPerVoxel){
+    if (!is.numeric(minSubjectPerVoxel) & is.character(minSubjectPerVoxel)) 
+	{#2 # input is percentage
+        if (! grepl('%', minSubjectPerVoxel) ) stop('minSubjectPerVoxel set as character with no % symbol, switch to numeric for exact number of subjects.')
+        thresholdPercent = as.numeric(gsub('%','', minSubjectPerVoxel)) / 100
+    }#2
+	else if (is.numeric(minSubjectPerVoxel))
+	{ #2
+		# user defined exact subject number
+		thresholdPercent = minSubjectPerVoxel / length(lesions.list)
+	}#2
+
+    return(thresholdPercent)
+}
+
+show_info <- function (txt, verbose){
+    if (verbose){
+        cat(sprintf('%s\n',txt))
+    }
+}
+
+load_lesion_if_exists <- function (folder, pcode){
+    require(ANTsR)
+
+    fname <- paste0(folder,as.character(pcode))
+    fn.nii <- paste0(fname,'.nii')
+	fn.nii.gz <- paste0(fname,'.nii.gz')	
+    fn <- NULL
+    if (file.exists(fn.nii)){
+        fn <- fn.nii
+    } else if (file.exists(fn.nii.gz)){
+        fn <- fn.nii.gz
+    } 
+
+    if (!is.null(fn)){
+        x <- antsImageRead(fn)
+    }
+    else {
+        x <- NULL
+    }
+
+    return(x)
+}
+
+load_lesions <- function(behavior, folder, subject_column = 'behavior', lesion_names, verbose = TRUE){
+
+    lesions <- list()
+    nxt <- 1
+    for (i in nrow(behavior)){
+        pcode <- behavior[[subject_column]][i]
+        show_info(sprintf('Load %s... [%d/%d]\n',pcode,i,nrow(behavior)), verbose)
+        x <- load_lesion_if_exists(folder, pcode)
+        if (!is.null(x)){
+            lesions[[nxt]] <- x
+            nxt <- nxt + 1
+        }
+        else {
+            show_info(sprintf('Lesion file was not found for patient %s.',pcode), verbose)
+        }
+    }
+    return (lesions)
+}
+
+compute_patchinfo <- function(lesions_list, minSubjectsPerVoxel = '10%' , verbose = TRUE)
+{
+    
+    require (ANTsR)
+    require (LESYMAP)
+
+    #convert minSubjectsPerVoxel into thresholdPercent:
+    thresholdPercent <- get_subj_threshold(minSubjectsPerVoxel)
+
+    # compute average map
+    avgles = antsAverageImages(lesions_list, verbose=FALSE) #average lesion
+
+    # Remove voxels with too few, or too many, subjects
+    mask = thresholdImage(avgles, thresholdPercent, 1 - thresholdPercent)
+
+    if (thresholdPercent == 0) mask[avgles==0] <- 0
+
+    show_info(sprintf('%d voxels were found.',sum(mask)), verbose)
+
+    # check mask is not empty
+    if (max(mask) == 0) stop('Mask is empty. No voxels to run analysis on.')
+
+    # compute unique patches
+
+    show_info('Computing unique patches...', verbose)
+
+    patchinfo = getUniqueLesionPatches(lesions_list, mask=mask,
+                                showInfo = TRUE, returnPatchMatrix = TRUE)
+    lesmat = patchinfo$patchmatrix
+    voxindx = patchinfo$patchindx
+    voxmask = patchinfo$patchimg.samples
+			 
+	}#2
+    
+}
+
+
