@@ -1,0 +1,19 @@
+
+
+function flip_lesions (behavior_fn, folder, subject_column, side_column, dest_dir, flip_to)
+
+args = struct()
+%flip_lesions <- function(behavior_fn, folder, subject_column = 'pcode', side_column = 'Side', dest_folder, fip_to = 'L')
+args.behavior_df = quote(win2lin(behavior_fn,'full'));
+args.folder = quote(win2lin([folder,'\'],'full'));
+args.subject_column = quote(subject_column);
+if strcmp(side_column,'None')
+    args.side_column = 'NULL';
+else
+    args.side_column = quote(side_column);
+end
+args.dest_dir = quote(win2lin([dest_dir,'\'],'full'));
+args.flip_to = quote(flip_to);
+
+
+end
