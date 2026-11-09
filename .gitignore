@@ -15,6 +15,7 @@ tmp*
 *.bug.bak
 model_*.stan
 temp_plot.R
-quick_source.R
 conj*.csv
 *- עותק*
+model.stan
+spike_slab_model.bug
