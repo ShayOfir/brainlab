@@ -921,21 +921,56 @@ voxel_volume_cc <- function(nifti_obj) {
   vox_mm3 / 1000  # mm^3 -> cc
 }
 
+# ------------------------------------------------------------------------------------
+# VALIDATION NOTE (2026-10-06)
+# The weighted-lesion-load code below was checked line-by-line against
+#   pyLesionLoad/lesion_load_ops/lesion_load_calc.py :: calculate_prob_weighted_lesion_load()
+# (Williamson et al.). The maths is identical: per axial slice,
+#       weighted_overlap = n_lesioned_tract_voxels * max_slice_area / slice_area
+#   total (AUC)  = trapezoidal integral of that profile along z (dz = 1 slice)
+#   max          = its maximum over slices
+# Reference values for pyLesionLoad/example_lesion.nii.gz against
+# data/HCPA/HCPA_CST_Right_MNI.nii (max slice area = 186 vx; the Left tract is 181 vx):
+#       AUC = 781.2621,  max = 79.7143      <- use these as a regression test
+# Two notes that matter for interpretation, not for correctness:
+#   * weighted_overlap = pct_damaged * max_area, so max_weighted is EXACTLY
+#     max_pct * max_area / 100. Max weighted lesion load is a rescaling of max_pct and
+#     it saturates at max_area as soon as one slice is fully lesioned (ceiling effect).
+#   * the tract shipped with pyLesionLoad is binary, so "prob weighted" is a misnomer
+#     there too; weighting is by slice area only, exactly as done here.
+# ------------------------------------------------------------------------------------
+
 compute_slice_overlap <- function(atlas, lesion) {
   require(dplyr)
-  ROI_data    <- atlas$img@.Data
+
+  ### FIX 3: was atlas$img@.Data, which fails for an antsImage atlas.
+  ROI_data    <- get_image_data(atlas$img)
   lesion_data <- get_image_data(lesion) > 0  # binarize once
-  
+
+  ### FIX 3 (cont.): the x-y/slice collapse below pairs voxels by position only. If the
+  ### atlas and the lesion are not on the same voxel grid the overlap is silently wrong
+  ### (recycled / shifted), which WOULD bias everything. Fail loudly instead.
+  if (!identical(dim(ROI_data), dim(lesion_data))) {
+    stop(sprintf('Atlas and lesion are on different grids (atlas = %s, lesion = %s). Resample the lesion onto the atlas grid first.',
+                 paste(dim(ROI_data),    collapse = 'x'),
+                 paste(dim(lesion_data), collapse = 'x')))
+  }
+
   n_slices    <- dim(ROI_data)[3]
   roi_indices <- sort(unique(ROI_data[ROI_data > 0]))
   xy_voxels   <- prod(dim(ROI_data)[1:2])
 
-  # collapse x-y into rows, slices into columns: (xy × slices)
+  # collapse x-y into rows, slices into columns: (xy x slices)
   roi_mat    <- matrix(ROI_data,    nrow = xy_voxels)
   lesion_mat <- matrix(lesion_data, nrow = xy_voxels)
 
+  ### FIX 5: fall back to Label if the LUT has no Label_NoSide column (otherwise
+  ### ROI_name becomes NA for every ROI and compute_weighted_overlap() would pool all
+  ### ROIs into one group and use the whole-tract max_area for every sector).
+  lut_label <- if (!is.null(atlas$LUT$Label_NoSide)) atlas$LUT$Label_NoSide else atlas$LUT$Label
+
   results <- lapply(roi_indices, function(idx) {
-    roi_mask   <- roi_mat == idx                      # xy × slices logical
+    roi_mask   <- roi_mat == idx                      # xy x slices logical
     slice_area <- colSums(roi_mask)
     n_voxel    <- colSums(roi_mask & lesion_mat)
     data.frame(
@@ -949,11 +984,18 @@ compute_slice_overlap <- function(atlas, lesion) {
 
   bind_rows(results) %>%
     filter(slice_area > 0) %>%
-    mutate(ROI_name = atlas$LUT$Label_NoSide[match(ROI_index, atlas$LUT$index)])
+    ### FIX 2: keep the total number of slices so the AUC can be integrated on the
+    ### complete, gap-free slice grid (see trapz_over_slices()).
+    mutate(n_slices = n_slices,
+           ROI_name = lut_label[match(ROI_index, atlas$LUT$index)])
 }
 
 compute_weighted_overlap <- function(overlap_df) {
+    ### NO CHANGE NEEDED - this formula is correct and matches Williamson's
+    ### weighted_s = s * (max_area / slice_weights[i]) exactly, with max_area taken
+    ### per ROI (= per tract / per sector), as in the Python code.
     overlap_df <- overlap_df %>%
+    dplyr::filter(slice_area > 0) %>%
     dplyr::group_by(ROI_name) %>%
     dplyr::mutate(max_area = max(slice_area)) %>%
     dplyr::ungroup() %>%
@@ -962,58 +1004,93 @@ compute_weighted_overlap <- function(overlap_df) {
     return(overlap_df)
 }
 
+### FIX 2 (new helper) ----------------------------------------------------------------
+# pracma::trapz(x, y) integrates over whatever x it is given. compute_slice_overlap()
+# drops slices where the ROI has no voxels, so x can contain gaps (common for the
+# radial/grid sectors); trapz then bridges each gap with one wide trapezoid and
+# inflates the AUC. Williamson integrates with np.trapz(lesion_load) over EVERY slice
+# of the volume (dx = 1, zeros outside the tract). This helper reproduces that.
+trapz_over_slices <- function(slice_idx, value, n_slices = NULL) {
+  require(pracma)
+  keep      <- !is.na(value)
+  slice_idx <- slice_idx[keep]
+  value     <- value[keep]
+  if (length(slice_idx) == 0) return(0)
+  grid <- if (is.null(n_slices) || !is.finite(n_slices)) {
+            (min(slice_idx) - 1L):(max(slice_idx) + 1L)   # zero-pad both ends
+          } else {
+            seq_len(n_slices)
+          }
+  y <- rep(0, length(grid))
+  y[match(slice_idx, grid)] <- value
+  pracma::trapz(grid, y)
+}
+
 compute_LL_by_slice <- function(overlap_df) {
+    ### FIX 7: the original computed lesion_load_auc here and then discarded it
+    ### (dead code, and it used the gap-prone trapz call). The AUC is now computed
+    ### once, by the callers, through trapz_over_slices().
+    n_sl <- if ('n_slices' %in% names(overlap_df)) overlap_df$n_slices[1] else NA_integer_
+
     lesion_load_by_slice <- overlap_df %>%
       dplyr::group_by(axial_slice) %>%
       dplyr::summarise(weighted_sum = sum(weighted_overlap),
                        raw_sum = sum(n_voxel), .groups = "drop") %>%
       dplyr::arrange(.data$axial_slice)
 
-    lesion_load_auc <- pracma::trapz(lesion_load_by_slice$axial_slice,
-                                     lesion_load_by_slice$weighted_sum)
+    lesion_load_by_slice$n_slices <- n_sl
 
     return(lesion_load_by_slice)
 }
-
 
 compute_LL_metrics_per_ROI <- function(atlas, lesion) {
   require(pracma)
   require(dplyr)
 
   overlap_df <- compute_slice_overlap(atlas, lesion) %>%
-                compute_weighted_overlap() 
-  
+                compute_weighted_overlap()
+
   vox_cc <- voxel_volume_cc(lesion)
 
   lesion_load_by_slice <- overlap_df %>% compute_LL_by_slice()
 
-  lesion_load_auc <- pracma::trapz(lesion_load_by_slice$axial_slice,
-                                     lesion_load_by_slice$weighted_sum)
+  ### FIX 2: integrate on the full slice grid (== np.trapz in the Python code)
+  lesion_load_auc <- trapz_over_slices(lesion_load_by_slice$axial_slice,
+                                       lesion_load_by_slice$weighted_sum,
+                                       lesion_load_by_slice$n_slices[1])
+  max_weighted <- max(lesion_load_by_slice$weighted_sum)
 
   metrics <- data.frame(
       total_pct             = sum(overlap_df$n_voxel) / sum(overlap_df$slice_area) * 100,
-      max_pct               = max(overlap_df$pct_voxel) * 100,
+      max_pct               = max(overlap_df$pct_voxel, na.rm = TRUE) * 100,
+      ### FIX 1: total_weighted / max_weighted are the RAW, Williamson-comparable
+      ### values (voxel units). The cc-scaled copies are kept separately below.
       total_weighted        = lesion_load_auc,
-      max_weighted          = max(lesion_load_by_slice$weighted_sum),
+      max_weighted          = max_weighted,
       total_volume          = sum(overlap_df$n_voxel) * vox_cc,
       total_weighted_volume = lesion_load_auc * vox_cc,
-      max_weighted_volume   = max(lesion_load_by_slice$weighted_sum) * vox_cc
+      max_weighted_volume   = max_weighted * vox_cc,
+      max_area              = max(overlap_df$max_area),
+      vox_cc                = vox_cc
     )
-  
-  
+
   return(metrics)
 }
 
-
-compute_CST_LL <- function(lesion, CST_atlases, thres = 0.5, side = 'L', 
-                           template = c('all', 'radial', 'grid', 'SMATT'), verbose = TRUE) {
+compute_CST_LL <- function(lesion, CST_atlases, thres = 0.5, side = 'L',
+                           template = c('all', 'radial', 'grid'), verbose = TRUE) {
   require(dplyr)
-  
   require(pracma)
-  
-  template <- match.arg(template,   choices = c('all', 'radial', 'grid'))
-  
-  if (sum(lesion > 0) != sum(lesion > thres)) {
+
+  ### FIX 8: the signature used to advertise 'SMATT' while match.arg() was called with
+  ### choices = c('all','radial','grid'), so template = 'SMATT' died with a confusing
+  ### error. The advertised choices and the accepted choices are now the same.
+  template <- match.arg(template)
+
+  ### FIX 6: test binariness on the raw array - sum() on an antsImage comparison is not
+  ### guaranteed to give the voxel count assumed here.
+  les_vals <- get_image_data(lesion)
+  if (sum(les_vals > 0) != sum(les_vals > thres)) {
     show_info(sprintf('Lesion is not binary, applying thresholding (threshold=%1.2f)', thres), verbose = verbose)
     lesion <- thres.lesion(lesion, thres)
   }
@@ -1024,47 +1101,75 @@ compute_CST_LL <- function(lesion, CST_atlases, thres = 0.5, side = 'L',
   }
 
   overlap_df <- compute_slice_overlap(atlas, lesion) %>%
-                compute_weighted_overlap() 
-  
+                compute_weighted_overlap()
+
   vox_cc <- voxel_volume_cc(lesion)
+  n_sl   <- overlap_df$n_slices[1]
 
   if (template == 'all') {
-    
+
       lesion_load_by_slice <- overlap_df %>% compute_LL_by_slice()
 
-      lesion_load_auc <- pracma::trapz(lesion_load_by_slice$axial_slice,
-                                     lesion_load_by_slice$weighted_sum)
+      ### FIX 2: full-grid integration, identical to np.trapz() over all slices
+      lesion_load_auc <- trapz_over_slices(lesion_load_by_slice$axial_slice,
+                                           lesion_load_by_slice$weighted_sum,
+                                           n_sl)
+      max_weighted <- max(lesion_load_by_slice$weighted_sum)
 
     out <- list(
       total_pct             = sum(overlap_df$n_voxel) / sum(overlap_df$slice_area) * 100,
-      max_pct               = max(overlap_df$pct_voxel) * 100,
+      max_pct               = max(overlap_df$pct_voxel, na.rm = TRUE) * 100,
+      ### FIX 1: raw (Williamson-comparable) weighted lesion load, in voxel units.
       total_weighted        = lesion_load_auc,
-      max_weighted          = max(lesion_load_by_slice$weighted_sum),
+      max_weighted          = max_weighted,
       total_volume          = sum(overlap_df$n_voxel) * vox_cc,
+      ### cc-scaled copies. NOTE: max_weighted_volume is a genuine volume (cc), but
+      ### total_weighted_volume is an AUC already integrated over slices, so its unit
+      ### is cc*slice - not a volume. Report total_weighted, not this, if you want a
+      ### number comparable to Williamson et al.
       total_weighted_volume = lesion_load_auc * vox_cc,
-      max_weighted_volume   = max(lesion_load_by_slice$weighted_sum) * vox_cc
+      max_weighted_volume   = max_weighted * vox_cc,
+      max_area              = max(overlap_df$max_area),
+      vox_cc                = vox_cc
     )
     out$lesion_load_by_slice <- lesion_load_by_slice
-    
+
   } else {
-    
+
     roi_df <- overlap_df %>%
       dplyr::group_by(ROI_name) %>%
       dplyr::summarise(
-        total_pct             = sum(n_voxel) / sum(slice_area) * 100,
-        max_pct               = max(pct_voxel) * 100,
-        total_weighted        = pracma::trapz(axial_slice, weighted_overlap),
-        max_weighted          = max(weighted_overlap),
-        total_volume          = sum(n_voxel) * vox_cc,
-        total_weighted_volume = pracma::trapz(axial_slice, weighted_overlap) * vox_cc,
-        max_weighted_volume   = max(weighted_overlap) * vox_cc
+        total_pct      = sum(n_voxel) / sum(slice_area) * 100,
+        max_pct        = max(pct_voxel, na.rm = TRUE) * 100,
+        ### FIX 2: sector slices are frequently non-contiguous, so the old
+        ### trapz(axial_slice, weighted_overlap) bridged the gaps and over-estimated
+        ### the sector AUCs. trapz_over_slices() integrates on the full slice grid.
+        total_weighted = trapz_over_slices(axial_slice, weighted_overlap, n_sl),
+        max_weighted   = max(weighted_overlap),
+        total_volume   = sum(n_voxel) * vox_cc,
+        max_area       = max(max_area),
+        .groups = "drop"
+      ) %>%
+      dplyr::mutate(
+        total_weighted_volume = total_weighted * vox_cc,
+        max_weighted_volume   = max_weighted   * vox_cc
       )
 
-    perc_subsections_injured <- sum(roi_df$total_pct > 5) / nrow(roi_df) * 100
+    ### FIX 4: Williamson divides by a fixed 16 subsections. nrow(roi_df) only counts
+    ### sectors that actually carry voxels in the atlas image, so an empty / missing
+    ### sector would shrink the denominator and inflate PS. Use the LUT size and warn.
+    n_sectors <- if (!is.null(atlas$LUT) && nrow(atlas$LUT) > 0) nrow(atlas$LUT) else nrow(roi_df)
+    if (nrow(roi_df) != n_sectors) {
+      warning(sprintf('Atlas %s: %d of %d sectors have no voxels in the atlas image; PS denominator = %d.',
+                      atlas$name, n_sectors - nrow(roi_df), n_sectors, n_sectors))
+    }
+    perc_subsections_injured <- sum(roi_df$total_pct > 5) / n_sectors * 100
 
     out <- list(
-      roi_df = roi_df,
-      PS     = perc_subsections_injured
+      roi_df    = roi_df,
+      PS        = perc_subsections_injured,
+      n_sectors = n_sectors,
+      vox_cc    = vox_cc
     )
   }
 
@@ -1108,12 +1213,15 @@ compute_CST_LL_for_cohort <- function(lesions_list,  cohort, subject_column = 'p
     CST_atlases <- prepare_atlases_for_LL()
     template_options <- c('all', 'radial', 'grid')
     results <- list()
-    for (i in seq_along(cohort[[subject_column]])){
+    n_subj  <- length(cohort[[subject_column]])
+
+    for (i in seq_len(n_subj)){
         pcode <- cohort[[subject_column]][i]
         side <- cohort[[side_column]][i]
-        cat(sprintf('Computing CST-LL for patient %d (%d/%d)...\n',pcode, i, length(lesions_list)))
+        ### FIX 9: %d crashes on non-integer patient codes, and the progress denominator
+        ### was length(lesions_list) instead of the number of subjects in the cohort.
+        cat(sprintf('Computing CST-LL for patient %s (%d/%d)...\n', as.character(pcode), i, n_subj))
 
-        #lesion <- extrantsr::ants2oro(lesions_list[[paste0(pcode)]])
         lesion <- lesions_list[[paste0(pcode)]]
 
         if (!is.null(lesion)){
@@ -1126,37 +1234,54 @@ compute_CST_LL_for_cohort <- function(lesions_list,  cohort, subject_column = 'p
                                                             template = template,
                                                             verbose = verbose)
               }
-            
-            
+
+
             # build the new row:
             new_row <- list(
-                    # Classic (Wiliamson et al., 2026) metrics:
+                    # Classic (Williamson et al.) metrics:
                     pcode = pcode,
+                    side  = side,
                     total_pct = patient_result$all$total_pct,
                     max_pct = patient_result$all$max_pct,
-                    total_weighted = patient_result$all$total_weighted_volume,
-                    max_weighted = patient_result$all$max_weighted_volume,
+                    ### FIX 1 - THIS IS THE BUG THAT PRODUCED THE 0-1 VALUES IN CSTLL.csv.
+                    ### These two columns used to be filled with *_weighted_volume, i.e.
+                    ### the AUC / max multiplied by the voxel volume in cc (0.001 on a
+                    ### 1 mm grid), while being named and read as the Williamson metric.
+                    ### They now carry the raw, Williamson-comparable values; the
+                    ### cc-scaled copies moved to the explicit *_cc columns.
+                    total_weighted = patient_result$all$total_weighted,
+                    max_weighted = patient_result$all$max_weighted,
+                    total_weighted_cc = patient_result$all$total_weighted_volume,
+                    max_weighted_cc = patient_result$all$max_weighted_volume,
+                    total_volume = patient_result$all$total_volume,
+                    max_area = patient_result$all$max_area,
                     radial_PS = patient_result$radial$PS,
                     grid_PS = patient_result$grid$PS
             )
 
-            # Individual sectors metrics (radial):
-            
+            # Individual sectors metrics (radial / grid):
+
             for (sectors_template in c('radial', 'grid')){
               sector_metrics <- patient_result[[sectors_template]]$roi_df %>%
                 dplyr::mutate(sector_num = stringr::str_extract(ROI_name, "\\d+")) %>% # Extract the numeric part
-                dplyr::select(sector_num, total_pct, max_pct, total_weighted_volume, max_weighted_volume) %>%
+                ### FIX 1 (cont.): the raw sector weighted metrics are exported too, not
+                ### only the cc-scaled ones.
+                dplyr::select(sector_num, total_pct, max_pct,
+                              total_weighted, max_weighted,
+                              total_weighted_volume, max_weighted_volume) %>%
                 tidyr::pivot_wider(
                     names_from = sector_num,
-                    values_from = c(total_pct, max_pct, total_weighted_volume, max_weighted_volume),
+                    values_from = c(total_pct, max_pct,
+                                    total_weighted, max_weighted,
+                                    total_weighted_volume, max_weighted_volume),
                     names_glue = paste0(sectors_template, "{sector_num}_{.value}"))
                 new_row <- c(new_row, as.list(sector_metrics))
             }
-                
-        results[[length(results) + 1]] <- new_row   
+
+        results[[length(results) + 1]] <- new_row
         }
         else {
-            cat(sprintf('Lesion for patient %d not found, skipping...\n',pcode))
+            cat(sprintf('Lesion for patient %s not found, skipping...\n', as.character(pcode)))
         }
     }
     # Combine all rows into a single data frame
