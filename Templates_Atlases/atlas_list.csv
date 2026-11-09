@@ -12,3 +12,6 @@ MC.Left,custom/LHD_motor_control.nii.gz,custom/LHD_motor_control_LUT.csv,ds.sing
 MC.Right,custom/RHD_motor_control.nii.gz,custom/RHD_motor_control_LUT.csv,ds.single_subj_T1.nii.gz,ds.single_subj_T1.nii.gz
 BNA1mm,BNA_atlas_1mm.nii.gz,BN_Atlas_246_LUT.csv,spm152.nii.gz,spm152.nii.gz
 XTRACT1mm,xtract_atlas_1mm.nii.gz,XTRACT_LUT.csv,spm152.nii.gz,spm152.nii.gz
+HCPA_CST_all,HCPA_CST_all.nii.gz,HCPA_CST_all_LUT.csv,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz
+HCPA_CST_radial,HCPA_CST_radial.nii.gz,HCPA_CST_sectors_LUT.csv,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz
+HCPA_CST_grid,HCPA_CST_grid.nii.gz,HCPA_CST_sectors_LUT.csv,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz,mni_icbm152_t1_tal_nlin_asym_09c_bet.nii.gz

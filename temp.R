@@ -1,2 +1,2 @@
 source("/shared/code/brainlab.R")
-overlay_lesions(behavior_df = "/shared/data/individuation/kinetics_flip_31.5.24.csv", folder = "/shared/data/individuation/norm.lesions.1mm_flipped/", fn_out = "/shared/data/individuation/overlay_flipped2/overlay", subject_column = "pcode", interim = 0, side_column = "Side", which_side = "L", threshold = 0)
+norm.brain(patient.folder = "/shared/data/tms/all/206/", p.fname = "ds.206.x.nii.gz", lesion.fname = "206.lesion.nii.gz", file.format = "nii", atlas.name = "BNA1mm", is.ct = 1, temp.op = "atlas", heal.op = 1, smooth.op = 1.5, deskull = 0, realign = "Rigid", reg_method = "SyN", interim.output = 1)
