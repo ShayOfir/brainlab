@@ -1,3 +1,9 @@
 #ignore the data folder
 data/
 temp.R
+*.nii.gz
+*.RData
+.Rhistory
+Templates_Atlases/
+*.zip
+*.pdf
