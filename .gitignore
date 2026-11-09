@@ -7,3 +7,14 @@ temp.R
 Templates_Atlases/
 *.zip
 *.pdf
+tmp*
+~$*
+*.asv
+*.zip
+*.RData
+*.bug.bak
+model_*.stan
+temp_plot.R
+quick_source.R
+conj*.csv
+*- עותק*
